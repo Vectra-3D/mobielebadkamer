@@ -3,11 +3,14 @@
   "use strict";
 
   /* ---------- config ----------
-     Set FORM_ENDPOINT to a form service URL (Formspree, Basin, your own PHP mailer...)
-     to submit requests in the background. Left empty, the form opens the visitor's
-     mail app with a filled-in message instead. */
-  const FORM_ENDPOINT = "";
+     Requests are emailed to MAIL_TO through FormSubmit (formsubmit.co), which needs
+     no server. The very first request triggers a one-time activation email to MAIL_TO;
+     click the link in it and every request after that arrives directly.
+     Once activated, FormSubmit also mails you a random alias: replace the address in
+     FORM_ENDPOINT with it to keep the address out of the page source.
+     Set FORM_ENDPOINT to "" to fall back to opening the visitor's mail app. */
   const MAIL_TO = "info@mobielebadkamer.info";
+  const FORM_ENDPOINT = `https://formsubmit.co/ajax/${MAIL_TO}`;
 
   const PRICES = {
     badkamer: { label: "Mobiele badkamer", minDays: 14, vat: "excl. btw", week: (n) => n * 137.5, detail: (n) => `${n} ${n === 1 ? "week" : "weken"} × €137,50` },
@@ -17,6 +20,7 @@
   const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
   const dayDiff = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000) + 1; // inclusive
+  const nlDate = (v) => (v ? new Date(`${v}T12:00:00`).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "-");
 
   /* ---------- mobile menu ---------- */
   const menu = document.getElementById("menu");
@@ -124,7 +128,7 @@
   update();
 
   const validateField = (el) => {
-    if (!el.name || el.type === "radio" || el.name === "website") return true;
+    if (!el.name || el.type === "radio" || el.type === "hidden" || el.name.startsWith("_")) return true;
     let msg = "";
     if (el.validity.valueMissing) msg = el.dataset.required || "Dit veld is nodig om je aanvraag te behandelen.";
     else if (el.type === "email" && (el.validity.typeMismatch || !/@[^@\s]+\.[a-z]{2,}$/i.test(el.value.trim()))) msg = "Dit lijkt geen geldig e-mailadres. Controleer de @ en de punt.";
@@ -137,7 +141,7 @@
   form.setAttribute("novalidate", "");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (form.website?.value) return; // honeypot
+    if (form.querySelector('[name="_honey"]')?.value) return; // honeypot
     const fields = [...form.querySelectorAll("input, select, textarea")];
     const ok = fields.map(validateField).every(Boolean);
     update();
@@ -146,14 +150,37 @@
 
     const data = new FormData(form);
     const p = PRICES[product()];
+    const days = dayDiff(data.get("vanaf"), data.get("tot"));
+    const estimate = document.querySelector("#estimate .estimate__amount")?.textContent || "-";
+    const delivery = data.get("levering") === "zelf" ? "Haalt zelf op" : "Graag bezorgen en aansluiten";
+    const subject = `Huuraanvraag ${p.label}: ${nlDate(data.get("vanaf"))} t/m ${nlDate(data.get("tot"))}`;
+    // readable labels become the rows of the email table
+    const mail = new FormData();
+    mail.append("Product", p.label);
+    mail.append("Vanaf", nlDate(data.get("vanaf")));
+    mail.append("Tot en met", nlDate(data.get("tot")));
+    mail.append("Aantal dagen", String(days));
+    mail.append("Indicatie huurprijs", `${estimate} ${p.vat}`);
+    mail.append("Naam", `${data.get("voornaam")} ${data.get("achternaam")}`.trim());
+    mail.append("email", data.get("email"));
+    mail.append("Telefoon", data.get("telefoon"));
+    mail.append("Plaats / postcode", data.get("plaats") || "-");
+    mail.append("Bezorging", delivery);
+    mail.append("Opmerkingen", data.get("opmerkingen") || "-");
+    mail.append("_subject", subject);
+    mail.append("_template", "table");
+    mail.append("_replyto", data.get("email"));
+    mail.append("_captcha", "false");
+    mail.append("_honey", "");
+
     const body = [
       `Product: ${p.label}`,
-      `Periode: ${data.get("vanaf")} t/m ${data.get("tot")}`,
+      `Periode: ${nlDate(data.get("vanaf"))} t/m ${nlDate(data.get("tot"))}`,
       `Naam: ${data.get("voornaam")} ${data.get("achternaam")}`,
       `E-mail: ${data.get("email")}`,
       `Telefoon: ${data.get("telefoon")}`,
       `Plaats / postcode: ${data.get("plaats") || "-"}`,
-      `Bezorgen: ${data.get("levering") === "zelf" ? "Ik haal zelf op" : "Graag bezorgen en aansluiten"}`,
+      `Bezorging: ${delivery}`,
       "",
       `${data.get("opmerkingen") || ""}`,
     ].join("\n");
@@ -162,18 +189,23 @@
     const done = document.getElementById("form-done");
 
     if (FORM_ENDPOINT) {
-      btn.disabled = true; btn.textContent = "Bezig met versturen…";
+      const err = document.getElementById("form-error");
+      err.hidden = true;
+      btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Bezig met versturen…";
       try {
-        const res = await fetch(FORM_ENDPOINT, { method: "POST", body: data, headers: { Accept: "application/json" } });
-        if (!res.ok) throw new Error(res.status);
+        const res = await fetch(FORM_ENDPOINT, { method: "POST", body: mail, headers: { Accept: "application/json" } });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || String(json.success) !== "true") throw new Error(json.message || res.status);
         form.hidden = true; done.classList.add("is-visible"); done.focus();
+        done.scrollIntoView({ block: "center" });
       } catch {
-        btn.disabled = false; btn.textContent = "Aanvraag versturen";
-        const err = document.getElementById("form-error");
+        btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Aanvraag versturen";
+        const mailLink = err.querySelector("a[data-mailto]");
+        if (mailLink) mailLink.href = `mailto:${MAIL_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         err.hidden = false; err.focus();
       }
     } else {
-      location.href = `mailto:${MAIL_TO}?subject=${encodeURIComponent(`Huuraanvraag ${p.label} (${data.get("vanaf")} t/m ${data.get("tot")})`)}&body=${encodeURIComponent(body)}`;
+      location.href = `mailto:${MAIL_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       done.classList.add("is-visible");
       done.querySelector("[data-mail-note]").hidden = false;
       done.focus();
