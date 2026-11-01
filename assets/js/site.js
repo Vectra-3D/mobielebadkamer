@@ -3,14 +3,16 @@
   "use strict";
 
   /* ---------- config ----------
-     Requests are emailed to MAIL_TO through FormSubmit (formsubmit.co), which needs
-     no server. The very first request triggers a one-time activation email to MAIL_TO;
-     click the link in it and every request after that arrives directly.
-     Once activated, FormSubmit also mails you a random alias: replace the address in
-     FORM_ENDPOINT with it to keep the address out of the page source.
-     Set FORM_ENDPOINT to "" to fall back to opening the visitor's mail app. */
+     How the request form sends, in order:
+     1. On your own web host: send.php (in the site root) mails the request. No third party.
+     2. If send.php isn't there or PHP doesn't run (e.g. GitHub Pages): FormSubmit (formsubmit.co).
+        The very first FormSubmit request triggers a one-time activation email to MAIL_TO;
+        click the link in it and every request after that arrives directly. FormSubmit then
+        also mails a random alias: put it in place of MAIL_TO in FORMSUBMIT_ENDPOINT.
+     3. If both fail, the visitor gets a ready-made email link and the phone number.
+     Set FORMSUBMIT_ENDPOINT to "" to never use FormSubmit. */
   const MAIL_TO = "info@mobielebadkamer.info";
-  const FORM_ENDPOINT = `https://formsubmit.co/ajax/${MAIL_TO}`;
+  const FORMSUBMIT_ENDPOINT = `https://formsubmit.co/ajax/${MAIL_TO}`;
 
   const PRICES = {
     badkamer: { label: "Mobiele badkamer", minDays: 14, vat: "excl. btw", week: (n) => n * 137.5, detail: (n) => `${n} ${n === 1 ? "week" : "weken"} × €137,50` },
@@ -187,28 +189,58 @@
 
     const btn = form.querySelector('[type="submit"]');
     const done = document.getElementById("form-done");
+    const err = document.getElementById("form-error");
+    const mailto = `mailto:${MAIL_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
-    if (FORM_ENDPOINT) {
-      const err = document.getElementById("form-error");
-      err.hidden = true;
-      btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Bezig met versturen…";
-      try {
-        const res = await fetch(FORM_ENDPOINT, { method: "POST", body: mail, headers: { Accept: "application/json" } });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok || String(json.success) !== "true") throw new Error(json.message || res.status);
-        form.hidden = true; done.classList.add("is-visible"); done.focus();
-        done.scrollIntoView({ block: "center" });
-      } catch {
-        btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Aanvraag versturen";
-        const mailLink = err.querySelector("a[data-mailto]");
-        if (mailLink) mailLink.href = `mailto:${MAIL_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-        err.hidden = false; err.focus();
+    // 1. send.php on our own host (skipped on GitHub Pages and when opened from disk)
+    const sendPhp = async () => {
+      const res = await fetch(form.dataset.php, { method: "POST", body: data, headers: { Accept: "application/json" } });
+      const json = await res.json().catch(() => null);
+      if (!json) return "unavailable"; // no PHP: 404/405 page, or the raw .php file
+      if (res.ok && json.ok) return "sent";
+      if (res.status === 422 && json.errors) {
+        Object.entries(json.errors).forEach(([name, msg]) => { const el = form.querySelector(`[name="${name}"]`); if (el && el.type !== "radio") setError(el, msg); });
+        return "invalid";
       }
-    } else {
-      location.href = `mailto:${MAIL_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      const e2 = new Error(json.message || `HTTP ${res.status}`); e2.status = res.status; throw e2;
+    };
+    // 2. FormSubmit (no server needed)
+    const sendFormSubmit = async () => {
+      const res = await fetch(FORMSUBMIT_ENDPOINT, { method: "POST", body: mail, headers: { Accept: "application/json" } });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || String(json.success) !== "true") throw new Error(json.message || `HTTP ${res.status}`);
+      return "sent";
+    };
+    const canUsePhp = form.dataset.php && /^https?:$/.test(location.protocol) && !/\.github\.io$/i.test(location.hostname);
+
+    if (!canUsePhp && !FORMSUBMIT_ENDPOINT) {
+      location.href = mailto;
       done.classList.add("is-visible");
       done.querySelector("[data-mail-note]").hidden = false;
       done.focus();
+      return;
+    }
+
+    err.hidden = true;
+    btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Bezig met versturen…";
+    try {
+      let result = canUsePhp ? await sendPhp().catch((x) => { if (!FORMSUBMIT_ENDPOINT || x.status === 429 || x.status === 403) throw x; return "unavailable"; }) : "unavailable";
+      if (result === "unavailable") {
+        if (!FORMSUBMIT_ENDPOINT) throw new Error("Geen verzendmethode beschikbaar");
+        result = await sendFormSubmit();
+      }
+      if (result === "invalid") {
+        btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Aanvraag versturen";
+        form.querySelector('[aria-invalid="true"]')?.focus();
+        return;
+      }
+      form.hidden = true; done.classList.add("is-visible"); done.focus();
+      done.scrollIntoView({ block: "center" });
+    } catch (x) {
+      btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Aanvraag versturen";
+      const mailLink = err.querySelector("a[data-mailto]");
+      if (mailLink) mailLink.href = mailto;
+      err.hidden = false; err.focus();
     }
   });
 })();
