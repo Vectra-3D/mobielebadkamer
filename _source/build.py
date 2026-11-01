@@ -652,7 +652,9 @@ contact = f"""
 <section class="section section--tight">
   <div class="wrap contact-layout">
     <div class="panel">
-      <form id="aanvraag" action="mailto:{MAIL}" method="post" enctype="text/plain">
+      <form id="aanvraag" action="https://formsubmit.co/{MAIL}" method="post" data-php="{{root}}send.php">
+        <input type="hidden" name="_subject" value="Huuraanvraag via de website">
+        <input type="hidden" name="_template" value="table">
         <div class="form-grid">
           <fieldset class="field full">
             <legend>Wat wil je huren?</legend>
@@ -716,17 +718,18 @@ contact = f"""
             <label for="opmerkingen">Vragen of opmerkingen <span class="opt">(optioneel)</span></label>
             <textarea id="opmerkingen" name="opmerkingen" placeholder="Bijvoorbeeld: waar de badkamer kan staan, of iets over de wateraansluiting."></textarea>
           </div>
-          <div class="hp" aria-hidden="true"><label for="website">Website</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+          <div class="hp" aria-hidden="true"><label for="hp-field">Laat dit veld leeg</label><input id="hp-field" name="_honey" tabindex="-1" autocomplete="off"></div>
           <div class="full" style="display:flex;flex-wrap:wrap;align-items:center;gap:1rem">
             <button class="btn btn--primary btn--lg" type="submit">Aanvraag versturen</button>
             <p class="hint">We reageren op werkdagen meestal dezelfde dag.</p>
+            <p class="hint full" style="flex-basis:100%">Je gegevens gebruiken we alleen om je aanvraag te behandelen.</p>
           </div>
-          <p class="error is-shown full" id="form-error" tabindex="-1" hidden>{ic('alert')}<span>Versturen lukte niet. Probeer het opnieuw of bel ons op {PHONE_D}.</span></p>
+          <p class="error is-shown full" id="form-error" tabindex="-1" hidden>{ic('alert')}<span>Versturen lukte niet. Probeer het opnieuw, <a data-mailto href="mailto:{MAIL}">stuur je aanvraag per e-mail</a> of bel <a href="tel:{PHONE_T}">{PHONE_D}</a>.</span></p>
         </div>
       </form>
       <div class="form-status form-status--ok" id="form-done" tabindex="-1" role="status">
-        <h3>Bedankt, je aanvraag staat klaar</h3>
-        <p>We nemen zo snel mogelijk contact met je op over de beschikbaarheid.</p>
+        <h3>Bedankt, je aanvraag is verstuurd</h3>
+        <p>We nemen zo snel mogelijk contact met je op over de beschikbaarheid. Haast? Bel <a href="tel:{PHONE_T}">{PHONE_D}</a>.</p>
         <p data-mail-note hidden style="margin-top:.75rem">Je e-mailprogramma is geopend met je aanvraag erin. Vergeet niet op <strong>verzenden</strong> te drukken. Werkt dat niet? Bel ons op <a href="tel:{PHONE_T}">{PHONE_D}</a>.</p>
       </div>
     </div>
